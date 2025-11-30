@@ -1,0 +1,40 @@
+{
+  "name": "ai-cv-server",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon --trace-warnings src/server.js",
+    "build": "npx prisma generate",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^6.18.0",
+    "@sparticuz/chromium": "^133.0.0",
+    "aws-sdk": "^2.1692.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^5.1.0",
+    "googleapis": "^166.0.0",
+    "groq-sdk": "^0.37.0",
+    "json5": "^2.2.3",
+    "jsonwebtoken": "^9.0.2",
+    "latex.js": "^0.12.6",
+    "node-latex": "^3.1.0",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.16.3",
+    "prisma": "^6.18.0",
+    "puppeteer-core": "^24.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
