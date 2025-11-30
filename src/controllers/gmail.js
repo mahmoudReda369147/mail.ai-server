@@ -469,4 +469,44 @@ const sendEmail = async (req, res) => {
   }
 };
 
-module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail };
+const deleteEmail = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    const { id } = req.params;
+    if (!id) return fail(res, 400, 'Message id is required');
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Delete the email (moves to trash)
+    await gmail.users.messages.trash({
+      userId: 'me',
+      id: id
+    });
+
+    return ok(res, { id, message: 'Email moved to trash successfully' }, 'Email moved to trash successfully');
+  } catch (error) {
+    console.error('Error deleting email:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    if (error?.code === 404) {
+      return fail(res, 404, 'Email not found');
+    }
+    return fail(res, 500, 'Failed to delete email: ' + (error?.message || ''));
+  }
+};
+
+module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail };
