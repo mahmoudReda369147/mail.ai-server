@@ -12,11 +12,15 @@ const gmailRoute = require('./routes/gmail.route');
 const app = express();
 
 // Middleware
-app.use(cors()); // Enable CORS for all routes
+app.use(cors({
+  origin: [ 'http://localhost:3001', 'http://127.0.0.1:3001'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
-// بيانات OAuth من Google Cloud
-
+// Routes
 app.use("/api/auth", authRoute);
 app.use("/api/gmail", gmailRoute);
 

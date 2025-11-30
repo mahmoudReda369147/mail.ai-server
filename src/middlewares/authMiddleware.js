@@ -27,7 +27,6 @@ const authMiddleware = async(req, res, next) => {
     
     // Add user info to request
     req.user = user;
-    console.log('Decoded token:', user);
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);

@@ -22,8 +22,8 @@ const sendGroqMessage = async function (systemPrompet,history = [], currentMessa
     ];
 
     const response = await groq.chat.completions.create({
-      // model: "llama-3.1-8b-instant",
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
+      // model: "llama-3.3-70b-versatile",
       messages,
       temperature: 0.7,
       max_tokens: 2048,

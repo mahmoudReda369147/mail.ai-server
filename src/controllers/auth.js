@@ -5,11 +5,13 @@ const oauth2Client = require("../services/googleClint");
 const login =(req, res) => {
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
+      prompt: "consent",
       // نحتاج صلاحيات لقراءة البريد + بيانات المستخدم (الايميل والاسم)
       scope: [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
+        "https://mail.google.com/",
         "openid",
       ],
     });
@@ -45,14 +47,14 @@ const login =(req, res) => {
         update: {
           name,
           accessToken: tokens.access_token ?? null,
-          refreshToken: tokens.id_token ?? null,
+          refreshToken: tokens.refresh_token ?? null,
           tokenExpiry,
         },
         create: {
           email,
           name,
           accessToken: tokens.access_token ?? null,
-          refreshToken: tokens.id_token ?? null,
+          refreshToken: tokens. refresh_token ?? null,
           tokenExpiry,
         },
       });

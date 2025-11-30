@@ -304,5 +304,169 @@ const getEmailById = async (req, res) => {
     return fail(res, 500, 'Failed to fetch email' + (error?.message || ''));
   }
 };
+const getreplayByGmailId = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
 
-module.exports = { getEmails, getEmailById };
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    const { id } = req.params;
+    if (!id) return fail(res, 400, 'Message id is required');
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    const msgRes = await gmail.users.messages.get({
+      userId: 'me',
+      id,
+      format: 'full',
+    });
+
+    const payload = msgRes.data.payload || {};
+    const headers = payload.headers || [];
+    const getHeader = (name) => headers.find((h) => h.name === name)?.value || null;
+    const bodies = extractBodies(payload);
+
+    const attachmentParts = collectAttachmentParts(payload);
+    const MAX_ATTACHMENT_COUNT = 10;
+    const MAX_INLINE_SIZE = 5 * 1024 * 1024; // 5MB
+    const selected = attachmentParts.slice(0, MAX_ATTACHMENT_COUNT);
+    const attachments = await Promise.all(
+      selected.map(async (att) => {
+        try {
+          if (att.size && att.size > MAX_INLINE_SIZE) {
+            return {
+              filename: att.filename,
+              mimeType: att.mimeType,
+              size: att.size,
+              attachmentId: att.attachmentId,
+              data: null,
+              tooLarge: true,
+            };
+          }
+          const attRes = await gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: msgRes.data.id,
+            id: att.attachmentId,
+          });
+          const data = attRes.data?.data || null; // base64url
+          return {
+            filename: att.filename,
+            mimeType: att.mimeType,
+            size: att.size,
+            attachmentId: att.attachmentId,
+            data,
+            tooLarge: false,
+          };
+        } catch (e) {
+          return {
+            filename: att.filename,
+            mimeType: att.mimeType,
+            size: att.size,
+            attachmentId: att.attachmentId,
+            data: null,
+            error: e?.message || 'Failed to fetch attachment',
+          };
+        }
+      })
+    );
+
+    const email = {
+      id: msgRes.data.id,
+      threadId: msgRes.data.threadId,
+      snippet: msgRes.data.snippet || null,
+      internalDate: msgRes.data.internalDate || null,
+      from: getHeader('From'),
+      to: getHeader('To'),
+      subject: getHeader('Subject'),
+      date: getHeader('Date'),
+      textBody: bodies.text,
+      htmlBody: bodies.html,
+      attachments,
+    };
+    const agentResponse = await agent(process.env.SYSTEM_PROMPET_FOR_GENERATE_MESSAGE,[],`the email is : ${email.textBody || email.htmlBody || ''}. and the user prompet is : ${req.body.prompet}`);
+    console.log("agentResponse", agentResponse);
+    return ok(res, {reply:agentResponse }, 'Email fetched successfully');
+  } catch (error) {
+    console.error('Error fetching email by id:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    return fail(res, 500, 'Failed to fetch email' + (error?.message || ''));
+  }
+};
+
+const sendEmail = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    const { to, subject, body, cc, bcc } = req.body;
+    
+    if (!to || !subject || !body) {
+      return fail(res, 400, 'Required fields: to, subject, body');
+    }
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Create email message
+    const emailLines = [];
+    emailLines.push(`To: ${to}`);
+    if (cc) emailLines.push(`Cc: ${cc}`);
+    if (bcc) emailLines.push(`Bcc: ${bcc}`);
+    emailLines.push(`Subject: ${subject}`);
+    emailLines.push(''); // Empty line between headers and body
+    emailLines.push(body);
+
+    const emailMessage = emailLines.join('\r\n');
+
+    // Encode message in base64url
+    const encodedMessage = Buffer.from(emailMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Send email
+    const response = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    return ok(res, { 
+      id: response.data.id, 
+      threadId: response.data.threadId,
+      message: 'Email sent successfully' 
+    }, 'Email sent successfully');
+  } catch (error) {
+    console.error('Error sending email:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    return fail(res, 500, 'Failed to send email: ' + (error?.message || ''));
+  }
+};
+
+module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail };
