@@ -395,7 +395,7 @@ const getreplayByGmailId = async (req, res) => {
     };
     const agentResponse = await agent(process.env.SYSTEM_PROMPET_FOR_GENERATE_MESSAGE,[],`the email is : ${email.textBody || email.htmlBody || ''}. and the user prompet is : ${req.body.prompet}`);
     console.log("agentResponse", agentResponse);
-    return ok(res, {reply:agentResponse }, 'Email fetched successfully');
+    return ok(res, {reply:JSON.parse(agentResponse) }, 'Email fetched successfully');
   } catch (error) {
     console.error('Error fetching email by id:', error);
     if (error?.code === 401) {
@@ -479,7 +479,7 @@ const deleteEmail = async (req, res) => {
     if (!user.accessToken && !user.refreshToken) {
       return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
     }
-
+    
     const { id } = req.params;
     if (!id) return fail(res, 400, 'Message id is required');
 
@@ -509,4 +509,111 @@ const deleteEmail = async (req, res) => {
   }
 };
 
-module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail };
+const getThreads = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    // Set credentials on the shared OAuth client
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Pagination and optional query filter
+    const { pageToken, q } = req.query;
+    const maxResults = 10;
+    
+    const listRes = await gmail.users.threads.list({
+      userId: 'me',
+      maxResults,
+      pageToken,
+      q,
+    });
+
+    const threads = listRes.data.threads || [];
+    const nextPageToken = listRes.data.nextPageToken || null;
+    const resultSizeEstimate = listRes.data.resultSizeEstimate ?? null;
+
+    // Fetch details for each thread in parallel
+    const concurrency = 10;
+    const chunks = [];
+    for (let i = 0; i < threads.length; i += concurrency) {
+      chunks.push(threads.slice(i, i + concurrency));
+    }
+
+    const results = [];
+    for (const chunk of chunks) {
+      const details = await Promise.all(
+        chunk.map(async (thread) => {
+          try {
+            const threadRes = await gmail.users.threads.get({
+              userId: 'me',
+              id: thread.id,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'From', 'To', 'Date'],
+            });
+
+            const messages = threadRes.data.messages || [];
+            const firstMessage = messages[0];
+            const lastMessage = messages[messages.length - 1];
+            
+            const getHeader = (headers, name) => headers.find((h) => h.name === name)?.value || null;
+            const firstHeaders = firstMessage?.payload?.headers || [];
+            const lastHeaders = lastMessage?.payload?.headers || [];
+
+            return {
+              id: threadRes.data.id,
+              historyId: threadRes.data.historyId,
+              snippet: threadRes.data.snippet || null,
+              messageCount: messages.length,
+              subject: getHeader(firstHeaders, 'Subject'),
+              from: getHeader(firstHeaders, 'From'),
+              to: getHeader(firstHeaders, 'To'),
+              firstDate: getHeader(firstHeaders, 'Date'),
+              lastDate: getHeader(lastHeaders, 'Date'),
+              messages: messages.map(msg => ({
+                id: msg.id,
+                threadId: msg.threadId,
+                snippet: msg.snippet || null,
+                internalDate: msg.internalDate || null,
+                from: getHeader(msg?.payload?.headers || [], 'From'),
+                to: getHeader(msg?.payload?.headers || [], 'To'),
+                subject: getHeader(msg?.payload?.headers || [], 'Subject'),
+                date: getHeader(msg?.payload?.headers || [], 'Date'),
+              }))
+            };
+          } catch (e) {
+            return { id: thread.id, error: e?.message || 'Failed to fetch thread' };
+          }
+        })
+      );
+      results.push(...details);
+    }
+
+    return ok(res, results, 'Threads fetched successfully', {
+      count: results.length,
+      pageSize: maxResults,
+      nextPageToken,
+      hasMore: Boolean(nextPageToken),
+      resultSizeEstimate,
+      q: q || null,
+    });
+  } catch (error) {
+    console.error('Error fetching threads:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    return fail(res, 500, 'Failed to fetch threads: ' + error.message);
+  }
+};
+
+module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads };
