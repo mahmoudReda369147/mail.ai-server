@@ -21,3 +21,16 @@ model User {
 
   @@map("users")
 }
+
+model Templete {
+  id            String   @id @default(cuid())
+  name          String
+  content       String
+  usedTimes     Int
+  categury      String
+  isFivoret     Boolean
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("templets")
+}

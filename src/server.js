@@ -8,6 +8,7 @@ dotenv.config();
 const prisma = require('./config/database');
 const authRoute = require('./routes/auth.route');
 const gmailRoute = require('./routes/gmail.route');
+const templetsRoute = require('./routes/templets.route');
 // Initialize Express app
 const app = express();
 
@@ -23,6 +24,7 @@ app.use(express.json());
 // Routes
 app.use("/api/auth", authRoute);
 app.use("/api/gmail", gmailRoute);
+app.use("/api/templets", templetsRoute);
 
 // Start server
 const PORT = config.PORT || 3000;
