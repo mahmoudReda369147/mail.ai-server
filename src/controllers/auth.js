@@ -62,7 +62,7 @@ const login =(req, res) => {
   
       console.log("User upserted:", tokens);
       const serverToken = jwt.sign({ email }, process.env.JWT_SECRET);
-      const redirectUrl = `http://localhost:3001?token=${encodeURIComponent(serverToken)}&status=success&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+      const redirectUrl = `http://localhost:3001/inbox?token=${encodeURIComponent(serverToken)}&status=success&email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
       return res.redirect(302, redirectUrl);
     } catch (err) {
       console.error("OAuth callback error:", err);

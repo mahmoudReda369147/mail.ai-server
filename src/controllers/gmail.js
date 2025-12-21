@@ -132,11 +132,20 @@ const getEmails = async (req, res) => {
     // Pagination (10 by 10) and optional query filter
     const { pageToken, q } = req.query;
     const maxResults = 10;
+    
+    // Build query to exclude sent emails
+    let query = q || '';
+    if (user.email) {
+      // Exclude emails from the user (sen
+      // t emails)
+      const excludeFrom = `-from:${user.email}`;
+      query = query ? `${query} ${excludeFrom}` : excludeFrom;
+    }
     const listRes = await gmail.users.messages.list({
       userId: 'me',
       maxResults,
       pageToken,
-      q,
+      q: query,
     });
 
     const messages = listRes.data.messages || [];
@@ -165,7 +174,50 @@ const getEmails = async (req, res) => {
             const getHeader = (name) => headers.find((h) => h.name === name)?.value || null;
             const bodies = extractBodies(payload);
 
-
+            // Collect and fetch attachments
+            const attachmentParts = collectAttachmentParts(payload);
+            const MAX_ATTACHMENT_COUNT = 10;
+            const MAX_INLINE_SIZE = 5 * 1024 * 1024; // 5MB
+            const selected = attachmentParts.slice(0, MAX_ATTACHMENT_COUNT);
+            const attachments = await Promise.all(
+              selected.map(async (att) => {
+                try {
+                  if (att.size && att.size > MAX_INLINE_SIZE) {
+                    return {
+                      filename: att.filename,
+                      mimeType: att.mimeType,
+                      size: att.size,
+                      attachmentId: att.attachmentId,
+                      data: null,
+                      tooLarge: true,
+                    };
+                  }
+                  const attRes = await gmail.users.messages.attachments.get({
+                    userId: 'me',
+                    messageId: msgRes.data.id,
+                    id: att.attachmentId,
+                  });
+                  const data = attRes.data?.data || null; // base64url
+                  return {
+                    filename: att.filename,
+                    mimeType: att.mimeType,
+                    size: att.size,
+                    attachmentId: att.attachmentId,
+                    data,
+                    tooLarge: false,
+                  };
+                } catch (e) {
+                  return {
+                    filename: att.filename,
+                    mimeType: att.mimeType,
+                    size: att.size,
+                    attachmentId: att.attachmentId,
+                    data: null,
+                    error: e?.message || 'Failed to fetch attachment',
+                  };
+                }
+              })
+            );
 
             return {
               id: msgRes.data.id,
@@ -176,6 +228,9 @@ const getEmails = async (req, res) => {
               to: getHeader('To'),
               subject: getHeader('Subject'),
               date: getHeader('Date'),
+              textBody: bodies.text,
+              htmlBody: bodies.html,
+              attachments,
             };
           } catch (e) {
             return { id: m.id, error: e?.message || 'Failed to fetch message' };
