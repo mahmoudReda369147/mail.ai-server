@@ -9,6 +9,7 @@ const prisma = require('./config/database');
 const authRoute = require('./routes/auth.route');
 const gmailRoute = require('./routes/gmail.route');
 const templetsRoute = require('./routes/templets.route');
+const calendarRoute = require('./routes/calendar.route');
 // Initialize Express app
 const app = express();
 
@@ -24,7 +25,8 @@ app.use(express.json());
 // Routes
 app.use("/api/auth", authRoute);
 app.use("/api/gmail", gmailRoute);
-app.use("/api/templets", templetsRoute);
+app.use("/api/templates", templetsRoute);
+app.use("/api/calendar", calendarRoute);
 
 // Start server
 const PORT = config.PORT || 8080;

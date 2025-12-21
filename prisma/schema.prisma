@@ -23,14 +23,50 @@ model User {
 }
 
 model Templete {
-  id            String   @id @default(cuid())
-  name          String
-  content       String
-  usedTimes     Int
-  categury      String
-  isFivoret     Boolean
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String
+  subject     String
+  body        String
+  categure    String
+  usedtimes   Int      @default(0)
+  isFavorets  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@map("templets")
+}
+
+model TemplateCategory {
+  id        String   @id @default(cuid())
+  Name      String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("template_categories")
+}
+
+model SendedEmail {
+  id          String   @id @default(cuid())
+  emailId     String
+  theridedId  String
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("sended_emails")
+}
+
+model CalendarTask {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime
+  status      String   @default("pending") // pending, completed, cancelled
+  priority    String   @default("medium") // low, medium, high
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("calendar_tasks")
 }

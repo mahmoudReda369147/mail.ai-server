@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "templets" ALTER COLUMN "body" DROP DEFAULT,
+ALTER COLUMN "categure" DROP DEFAULT,
+ALTER COLUMN "subject" DROP DEFAULT;

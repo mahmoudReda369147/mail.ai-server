@@ -490,6 +490,8 @@ const sendEmail = async (req, res) => {
     if (cc) emailLines.push(`Cc: ${cc}`);
     if (bcc) emailLines.push(`Bcc: ${bcc}`);
     emailLines.push(`Subject: ${subject}`);
+    emailLines.push('MIME-Version: 1.0');
+    emailLines.push(`Content-Type: text/html; charset=UTF-8`);
     emailLines.push(''); // Empty line between headers and body
     emailLines.push(body);
 
@@ -509,6 +511,20 @@ const sendEmail = async (req, res) => {
         raw: encodedMessage
       }
     });
+
+    // Save sent email to database
+    try {
+      await prisma.sendedEmail.create({
+        data: {
+          emailId: response.data.id,
+          theridedId: response.data.threadId,
+          userId: user.id
+        }
+      });
+    } catch (dbError) {
+      console.error('Error saving sent email to database:', dbError);
+      // Continue with response even if DB save fails
+    }
 
     return ok(res, { 
       id: response.data.id, 
@@ -671,4 +687,160 @@ const getThreads = async (req, res) => {
   }
 };
 
-module.exports = { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads };
+/**
+ * GET /api/gmail/sended
+ * Get all sent emails from Google Gmail API (not from database)
+ */
+const getSendedEmails = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    // Set credentials on the shared OAuth client
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Pagination and optional query filter
+    const { pageToken, q } = req.query;
+    const maxResults = 10;
+    
+    // Build query to get only sent emails
+    let query = q || '';
+    if (user.email) {
+      // Only show emails sent by the user
+      const fromUser = `from:${user.email}`;
+      query = query ? `${query} ${fromUser}` : fromUser;
+    }
+    
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults,
+      pageToken,
+      q: query,
+    });
+
+    const messages = listRes.data.messages || [];
+    const nextPageToken = listRes.data.nextPageToken;
+    const resultSizeEstimate = listRes.data.resultSizeEstimate;
+
+    if (messages.length === 0) {
+      return ok(res, [], 'No sent emails found', {
+        count: 0,
+        pageSize: maxResults,
+        nextPageToken,
+        hasMore: Boolean(nextPageToken),
+        resultSizeEstimate,
+        q: query || null,
+      });
+    }
+
+    // Fetch full message details for each message
+    const concurrency = 5; // Process 5 messages at a time
+    const chunks = [];
+    for (let i = 0; i < messages.length; i += concurrency) {
+      chunks.push(messages.slice(i, i + concurrency));
+    }
+
+    const results = [];
+    for (const chunk of chunks) {
+      const details = await Promise.all(
+        chunk.map(async (message) => {
+          try {
+            const messageRes = await gmail.users.messages.get({
+              userId: 'me',
+              id: message.id,
+              format: 'full',
+            });
+
+            const payload = messageRes.data.payload;
+            const headers = payload?.headers || [];
+            
+            const getHeader = (headers, name) => headers.find((h) => h.name === name)?.value || null;
+
+            // Helper function to extract body content from message parts
+            const extractBodyContent = (payload) => {
+              let textBody = '';
+              let htmlBody = '';
+              
+              const processPart = (part) => {
+                if (part.mimeType === 'text/plain' && part.body.data) {
+                  textBody = decodeBase64Url(part.body.data);
+                } else if (part.mimeType === 'text/html' && part.body.data) {
+                  htmlBody = decodeBase64Url(part.body.data);
+                } else if (part.parts) {
+                  part.parts.forEach(processPart);
+                }
+              };
+              
+              if (payload.parts) {
+                payload.parts.forEach(processPart);
+              } else if (payload.body && payload.body.data) {
+                if (payload.mimeType === 'text/plain') {
+                  textBody = decodeBase64Url(payload.body.data);
+                } else if (payload.mimeType === 'text/html') {
+                  htmlBody = decodeBase64Url(payload.body.data);
+                }
+              }
+              
+              return { textBody, htmlBody };
+            };
+
+            const { textBody, htmlBody } = extractBodyContent(payload);
+
+            return {
+              id: messageRes.data.id,
+              threadId: messageRes.data.threadId,
+              snippet: messageRes.data.snippet || null,
+              internalDate: messageRes.data.internalDate,
+              from: getHeader(headers, 'From'),
+              to: getHeader(headers, 'To'),
+              subject: getHeader(headers, 'Subject'),
+              date: getHeader(headers, 'Date'),
+              textBody: textBody,
+              htmlBody: htmlBody,
+              attachments: []
+            };
+          } catch (e) {
+            return { id: message.id, error: e?.message || 'Failed to fetch message' };
+          }
+        })
+      );
+      results.push(...details);
+    }
+
+    return ok(res, results, 'Sent emails fetched successfully', {
+      count: results.length,
+      pageSize: maxResults,
+      nextPageToken,
+      hasMore: Boolean(nextPageToken),
+      resultSizeEstimate,
+      q: query || null,
+    });
+  } catch (error) {
+    console.error('Error fetching sent emails:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    return fail(res, 500, 'Failed to fetch sent emails: ' + error.message);
+  }
+};
+
+module.exports = {
+  getEmails,
+  getEmailById,
+  getreplayByGmailId,
+  sendEmail,
+  deleteEmail,
+  getThreads,
+  getSendedEmails,
+};
