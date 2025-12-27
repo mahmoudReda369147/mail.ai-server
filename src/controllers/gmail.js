@@ -485,8 +485,8 @@ const sendEmail = async (req, res) => {
       return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
     }
 
-    const { to, subject, body, cc, bcc } = req.body;
-    
+    const { to, subject, gmailId, body, cc, bcc } = req.body;
+
     if (!to || !subject || !body) {
       return fail(res, 400, 'Required fields: to, subject, body');
     }
@@ -498,12 +498,47 @@ const sendEmail = async (req, res) => {
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+    let threadId = null;
+    let messageId = null;
+    let references = null;
+
+    // If gmailId exists, fetch the original email to get threadId and Message-ID
+    if (gmailId) {
+      try {
+        const originalEmail = await gmail.users.messages.get({
+          userId: 'me',
+          id: gmailId,
+          format: 'metadata',
+          metadataHeaders: ['Message-ID', 'References'],
+        });
+
+        threadId = originalEmail.data.threadId;
+        const headers = originalEmail.data.payload?.headers || [];
+        messageId = headers.find(h => h.name === 'Message-ID')?.value;
+        references = headers.find(h => h.name === 'References')?.value;
+      } catch (error) {
+        console.error('Error fetching original email:', error);
+        // Continue without threading if original email can't be fetched
+      }
+    }
+
     // Create email message
     const emailLines = [];
     emailLines.push(`To: ${to}`);
     if (cc) emailLines.push(`Cc: ${cc}`);
     if (bcc) emailLines.push(`Bcc: ${bcc}`);
     emailLines.push(`Subject: ${subject}`);
+
+    // Add threading headers if replying to an existing email
+    if (messageId) {
+      emailLines.push(`In-Reply-To: ${messageId}`);
+      if (references) {
+        emailLines.push(`References: ${references} ${messageId}`);
+      } else {
+        emailLines.push(`References: ${messageId}`);
+      }
+    }
+
     emailLines.push('MIME-Version: 1.0');
     emailLines.push(`Content-Type: text/html; charset=UTF-8`);
     emailLines.push(''); // Empty line between headers and body
@@ -518,33 +553,39 @@ const sendEmail = async (req, res) => {
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    // Send email
-    const response = await gmail.users.messages.send({
+    // Send email with threadId if available
+    const sendRequest = {
       userId: 'me',
       requestBody: {
         raw: encodedMessage
       }
-    });
+    };
 
-    // Save sent email to database
-    try {
-      await prisma.sendedEmail.create({
-        data: {
-          emailId: response.data.id,
-          theridedId: response.data.threadId,
-          userId: user.id
-        }
-      });
-    } catch (dbError) {
-      console.error('Error saving sent email to database:', dbError);
-      // Continue with response even if DB save fails
+    if (threadId) {
+      sendRequest.requestBody.threadId = threadId;
     }
 
-    return ok(res, { 
-      id: response.data.id, 
+    const response = await gmail.users.messages.send(sendRequest);
+
+    // Save sent email to database
+    // try {
+    //   await prisma.sendedEmail.create({
+    //     data: {
+    //       emailId: response.data.id,
+    //       theridedId: response.data.threadId,
+    //       userId: user.id
+    //     }
+    //   });
+    // } catch (dbError) {
+    //   console.error('Error saving sent email to database:', dbError);
+    //   // Continue with response even if DB save fails
+    // }
+
+    return ok(res, {
+      id: response.data.id,
       threadId: response.data.threadId,
-      message: 'Email sent successfully' 
-    }, 'Email sent successfully');
+      message: gmailId ? 'Reply sent successfully in same thread' : 'Email sent successfully'
+    }, gmailId ? 'Reply sent successfully in same thread' : 'Email sent successfully');
   } catch (error) {
     console.error('Error sending email:', error);
     if (error?.code === 401) {

@@ -99,7 +99,7 @@ const getAllTasks = async (req, res) => {
       return fail(res, 401, 'Unauthorized');
     }
 
-    const { gmailId, isDoneTask, priority, page = 1, limit = 10 } = req.query;
+    const { gmailId, isDoneTask, priority, page = 1, limit = 10, search, from, to } = req.query;
 
     const where = { userId: user.id };
 
@@ -107,11 +107,30 @@ const getAllTasks = async (req, res) => {
     if (isDoneTask !== undefined) where.isDoneTask = isDoneTask === 'true';
     if (priority) where.priority = priority;
 
+    // Text search on task content (case-insensitive)
+    if (search && typeof search === 'string' && search.trim()) {
+      where.task = { contains: search.trim(), mode: 'insensitive' };
+    }
+
+    // Date range filtering on taskDate via `from` and/or `to`
+    const range = {};
+    if (from) {
+      const fromDate = new Date(from);
+      if (!isNaN(fromDate.getTime())) range.gte = fromDate;
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (!isNaN(toDate.getTime())) range.lte = toDate;
+    }
+    if (Object.keys(range).length) {
+      where.createdAt = range;
+    }
+
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
     const skip = (pageNum - 1) * limitNum;
 
-    const [tasks, total] = await Promise.all([
+    const [tasks, total, pendingCount, doneCount] = await Promise.all([
       prisma.task.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -119,6 +138,8 @@ const getAllTasks = async (req, res) => {
         take: limitNum,
       }),
       prisma.task.count({ where }),
+      prisma.task.count({ where: { userId: user.id, isDoneTask: false } }),
+      prisma.task.count({ where: { userId: user.id, isDoneTask: true } }),
     ]);
 
     return ok(res, tasks, 'Tasks fetched successfully', {
@@ -126,6 +147,8 @@ const getAllTasks = async (req, res) => {
       page: pageNum,
       limit: limitNum,
       totalPages: Math.ceil(total / limitNum),
+      pendingTasks: pendingCount,
+      doneTasks: doneCount,
     });
   } catch (error) {
     console.error('Error fetching tasks:', error);

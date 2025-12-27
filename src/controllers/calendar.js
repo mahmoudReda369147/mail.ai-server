@@ -81,7 +81,7 @@ const getTasks = async (req, res) => {
       return fail(res, 401, 'Unauthorized');
     }
 
-    const { status, priority, startDate, endDate } = req.query;
+    const { status, priority, from, to ,search,page,limit} = req.query;
 
     // Build where clause
     let whereClause = {
@@ -96,24 +96,38 @@ const getTasks = async (req, res) => {
       whereClause.priority = priority;
     }
 
-    if (startDate || endDate) {
+    if (from || to) {
       whereClause.dueDate = {};
-      if (startDate) {
-        whereClause.dueDate.gte = new Date(startDate);
+      if (from) {
+        whereClause.dueDate.gte = new Date(from);
       }
-      if (endDate) {
-        whereClause.dueDate.lte = new Date(endDate);
+      if (to) {
+        whereClause.dueDate.lte = new Date(to);
       }
     }
 
+    if (search && typeof search === 'string' && search.trim()) {
+      whereClause.title = { contains: search.trim(), mode: 'insensitive' };
+    }
+    const pageNum = parseInt(page, 9);
+    const limitNum = parseInt(limit, 9);
+    const skip = (pageNum - 1) * limitNum;
     const tasks = await prisma.calendarTask.findMany({
       where: whereClause,
       orderBy: {
         dueDate: 'asc'
-      }
+      },
+      skip,
+      take: limitNum,
     });
+    const total = await prisma.calendarTask.count({ where: whereClause });
 
-    return ok(res, tasks, 'Tasks fetched successfully');
+    return ok(res, tasks, 'Tasks fetched successfully', {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
   } catch (error) {
     console.error('Error fetching tasks:', error);
     return fail(res, 500, 'Failed to fetch tasks: ' + (error?.message || ''));
