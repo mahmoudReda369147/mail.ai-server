@@ -58,15 +58,42 @@ model SendedEmail {
 }
 
 model CalendarTask {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  dueDate     DateTime
-  status      String   @default("pending") // pending, completed, cancelled
-  priority    String   @default("medium") // low, medium, high
-  userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  dueDate         DateTime
+  status          String   @default("pending") // pending, completed, cancelled
+  priority        String   @default("medium") // low, medium, high
+  userId          String
+  gmailId         String?
+  googleEventId   String?  // Google Calendar event ID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("calendar_tasks")
+}
+model Task {
+  id              String   @id @default(cuid())
+  task           String
+  taskDate         DateTime?
+  isDoneTask          Boolean   @default(false)
+  priority        String   @default("medium") // low, medium, high
+  userId          String
+  gmailId         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@map("tasks")
+}
+
+model AiSummarys {
+  id              String   @id @default(cuid())
+  summary         String
+  priority        Int   
+  userId          String
+  gmailId         String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("ai_summarys")
 }

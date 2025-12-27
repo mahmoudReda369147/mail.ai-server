@@ -1,5 +1,6 @@
 const prisma = require('../config/database');
 const { ok, fail } = require('../utils/response');
+const { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } = require('../services/calendarService');
 
 const addTask = async (req, res) => {
   try {
@@ -8,7 +9,7 @@ const addTask = async (req, res) => {
       return fail(res, 401, 'Unauthorized');
     }
 
-    const { title, description, dueDate, status, priority } = req.body;
+    const { title, description, dueDate, status, priority ,gmailId} = req.body;
     
     if (!title || !dueDate) {
       return fail(res, 400, 'Required fields: title, dueDate');
@@ -34,7 +35,23 @@ const addTask = async (req, res) => {
       return fail(res, 400, 'Invalid priority. Must be: low, medium, or high');
     }
 
-    // Create calendar task
+    // Create event in Google Calendar first
+    let googleEventId = null;
+    try {
+      const googleEvent = await createCalendarEvent(user.id, {
+        title,
+        description,
+        dueDate: parsedDueDate,
+        priority: taskPriority
+      });
+      googleEventId = googleEvent.id;
+    } catch (calendarError) {
+      console.error('Error creating Google Calendar event:', calendarError);
+      // Continue with database creation even if Google Calendar fails
+      // This ensures the task is still saved locally
+    }
+
+    // Create calendar task in database
     const task = await prisma.calendarTask.create({
       data: {
         title: title,
@@ -42,11 +59,15 @@ const addTask = async (req, res) => {
         dueDate: parsedDueDate,
         status: taskStatus,
         priority: taskPriority,
-        userId: user.id
+        userId: user.id,
+        googleEventId: googleEventId,
+        gmailId
       }
     });
 
-    return ok(res, task, 'Task added successfully');
+    return ok(res, task, googleEventId
+      ? 'Task added successfully to database and Google Calendar'
+      : 'Task added to database (Google Calendar sync failed)');
   } catch (error) {
     console.error('Error adding task:', error);
     return fail(res, 500, 'Failed to add task: ' + (error?.message || ''));
@@ -180,7 +201,22 @@ const updateTask = async (req, res) => {
       }
     }
 
-    // Update task
+    // Update Google Calendar event if it exists
+    if (existingTask.googleEventId && (title || description || dueDate || priority)) {
+      try {
+        await updateCalendarEvent(user.id, existingTask.googleEventId, {
+          title: title || existingTask.title,
+          description: description !== undefined ? description : existingTask.description,
+          dueDate: dueDate ? parsedDueDate : existingTask.dueDate,
+          priority: priority ? priority : existingTask.priority
+        });
+      } catch (calendarError) {
+        console.error('Error updating Google Calendar event:', calendarError);
+        // Continue with database update even if Google Calendar fails
+      }
+    }
+
+    // Update task in database
     const updatedTask = await prisma.calendarTask.update({
       where: {
         id: id
@@ -225,7 +261,17 @@ const deleteTask = async (req, res) => {
       return fail(res, 404, 'Task not found');
     }
 
-    // Delete task
+    // Delete from Google Calendar if event exists
+    if (existingTask.googleEventId) {
+      try {
+        await deleteCalendarEvent(user.id, existingTask.googleEventId);
+      } catch (calendarError) {
+        console.error('Error deleting Google Calendar event:', calendarError);
+        // Continue with database deletion even if Google Calendar fails
+      }
+    }
+
+    // Delete task from database
     await prisma.calendarTask.delete({
       where: {
         id: id

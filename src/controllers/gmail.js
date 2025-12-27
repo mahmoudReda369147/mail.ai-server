@@ -2,7 +2,7 @@ const { google } = require('googleapis');
 const prisma = require('../config/database');
 const agent = require('../services/agent');
 const oauth2Client = require('../services/googleClint');
-const { ok, fail } = require('../utils/response');
+const { ok, created, fail } = require('../utils/response');
 
 // Helper: decode Gmail's base64url-encoded body
 function decodeBase64Url(data) {
@@ -347,10 +347,24 @@ const getEmailById = async (req, res) => {
       htmlBody: bodies.html,
       attachments,
     };
-    const agentResponse = await agent(process.env.SYSTEM_PROMPET_FOR_MESSAGE,[],"the email is : " + (email.textBody || email.htmlBody || ''));
-    console.log("agentResponse", agentResponse);
-    const agentJson = safeParseAgentJson(agentResponse) || {};
-    return ok(res, { ...email, ...agentJson }, 'Email fetched successfully');
+
+    // Fetch last calendar task for this gmail
+    const lastCalendarTask = await prisma.calendarTask.findFirst({
+      where: { gmailId: id },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Fetch last AI summary for this gmail
+    const lastAiSummary = await prisma.aiSummarys.findFirst({
+      where: { gmailId: id },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return ok(res, {
+      ...email,
+      calendarTask: lastCalendarTask || null,
+      aiSummary: lastAiSummary || null
+    }, 'Email fetched successfully');
   } catch (error) {
     console.error('Error fetching email by id:', error);
     if (error?.code === 401) {
@@ -835,6 +849,43 @@ const getSendedEmails = async (req, res) => {
   }
 };
 
+const saveGmailSummary = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    const { summary, priority, gmailId } = req.body;
+
+    // Validate required fields (require summary, priority; userId defaults to auth user; gmailId optional by schema)
+    if (!summary || priority === undefined || priority === null) {
+      return fail(res, 400, 'summary and priority are required');
+    }
+
+  
+
+    const parsedPriority = parseInt(priority, 10);
+    if (Number.isNaN(parsedPriority)) {
+      return fail(res, 400, 'priority must be an integer');
+    }
+
+    const record = await prisma.aiSummarys.create({
+      data: {
+        summary,
+        priority: parsedPriority,
+        userId: user.id,
+        gmailId: gmailId ?? null,
+      },
+    });
+
+    return created(res, record, 'AI summary saved successfully');
+  } catch (error) {
+    console.error('Error saving AI summary:', error);
+    return fail(res, 500, 'Failed to save AI summary: ' + (error?.message || ''));
+  }
+};
+
 module.exports = {
   getEmails,
   getEmailById,
@@ -843,4 +894,5 @@ module.exports = {
   deleteEmail,
   getThreads,
   getSendedEmails,
+  saveGmailSummary,
 };

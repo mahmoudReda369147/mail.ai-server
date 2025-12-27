@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authMiddleware } = require('../middlewares/authMiddleware');
-const { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads, getSendedEmails } = require('../controllers/gmail');
+const { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads, getSendedEmails, saveGmailSummary } = require('../controllers/gmail');
 
 // GET /api/gmail/emails
 router.get('/emails', authMiddleware, getEmails);
@@ -22,5 +22,8 @@ router.get('/threads', authMiddleware, getThreads);
 
 // DELETE /api/gmail/emails/:id
 router.delete('/emails/:id', authMiddleware, deleteEmail);
+
+// POST /api/gmail/summary
+router.post('/summary', authMiddleware, saveGmailSummary);
 
 module.exports = router;

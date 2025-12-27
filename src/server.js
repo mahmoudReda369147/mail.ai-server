@@ -10,6 +10,7 @@ const authRoute = require('./routes/auth.route');
 const gmailRoute = require('./routes/gmail.route');
 const templetsRoute = require('./routes/templets.route');
 const calendarRoute = require('./routes/calendar.route');
+const taskRoute = require('./routes/task.route');
 // Initialize Express app
 const app = express();
 
@@ -27,6 +28,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/gmail", gmailRoute);
 app.use("/api/templates", templetsRoute);
 app.use("/api/calendar", calendarRoute);
+app.use("/api/tasks", taskRoute);
 
 // Start server
 const PORT = config.PORT || 8080;
