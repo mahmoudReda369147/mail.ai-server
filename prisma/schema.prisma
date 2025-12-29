@@ -9,6 +9,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ReplayTony {
+  Professional
+  Friendly
+  Concise
+  Detailed
+}
+
 model User {
   id            String   @id @default(cuid())
   email         String   @unique
@@ -96,4 +103,23 @@ model AiSummarys {
   updatedAt       DateTime @updatedAt
 
   @@map("ai_summarys")
+}
+
+model Bots{
+  id              String   @id @default(cuid())
+  emails          String
+  botName         String
+  userId          String
+  isactive        Boolean  @default(true)
+  replayTony      ReplayTony
+  isAutoReply     Boolean  @default(false)
+  userPrompet     String
+  isautoSummarize Boolean  @default(false)
+  isautoExtractTaskes Boolean  @default(false)
+  isautoExtractMettengs Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("bots")
 }
