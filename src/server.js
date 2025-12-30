@@ -11,6 +11,8 @@ const gmailRoute = require('./routes/gmail.route');
 const templetsRoute = require('./routes/templets.route');
 const calendarRoute = require('./routes/calendar.route');
 const taskRoute = require('./routes/task.route');
+const webhooksRoute = require('./routes/webhooks');
+
 // Initialize Express app
 const app = express();
 
@@ -29,6 +31,8 @@ app.use("/api/gmail", gmailRoute);
 app.use("/api/templates", templetsRoute);
 app.use("/api/calendar", calendarRoute);
 app.use("/api/tasks", taskRoute);
+app.use("/api/webhooks", webhooksRoute);
+
 
 // Start server
 const PORT = config.PORT || 8080;
