@@ -1,5 +1,7 @@
 const prisma = require('../config/database');
-const { getNewMessages, getSenderEmail, isFromSpecificEmail } = require('../services/gmailPubSub');
+const { getNewMessages, getSenderEmail, isFromSpecificEmail, getMessageDetails, sendAutoReply } = require('../services/gmailPubSub');
+const { getSmartInboxAnalysis, analyzeActionItems, generateAutoReply } = require('../services/aiAgents');
+const { createMeetingEvent } = require('../services/calendarService');
 
 /**
  * Handle Gmail push notification webhook from Google Cloud Pub/Sub
@@ -44,35 +46,208 @@ const handleGmailWebhook = async (req, res) => {
 
         console.log(`Found ${newMessages.length} new messages for user ${user.email}`);
 
-        // Filter and process messages from specific emails
-        // TODO: You can configure this list in database or environment variables
-        const targetEmails = process.env.WATCH_EMAILS ?
-            process.env.WATCH_EMAILS.split(',').map(e => e.trim()) :
-            [];
-
+        // Process all messages
         for (const message of newMessages) {
             const senderEmail = getSenderEmail(message);
             console.log('New message from:', senderEmail);
 
-            // Check if message is from one of the target emails
-            const isTargetEmail = targetEmails.some(targetEmail =>
-                isFromSpecificEmail(message, targetEmail)
-            );
+            // Log the message
+            console.log('📧 New message received:', {
+                from: senderEmail,
+                message: message
+            });
 
-            if (isTargetEmail || targetEmails.length === 0) {
-                // Log the message (or do whatever you need)
-                console.log('📧 New message from watched email:', {
-                    from: senderEmail,
-                    message: message
-
-                });
-
-                // You can add custom logic here:
-                // - Store in database
-                // - Send notification
-                // - Create task automatically
-                // - etc.
+            const user = await prisma.user.findFirst({
+                where: { email: data.emailAddress }
+            });
+            if (!user) {
+                console.log('User not found for email:', data.emailAddress);
+                continue;
             }
+
+            const bots = await prisma.bots.findMany({
+                where: {
+                    userId: user.id,
+                    emails: {
+                        contains: senderEmail
+                    },
+                    isactive: true
+                }
+            });
+
+            console.log('Found bots:', bots);
+             const fullMessage = await getMessageDetails(user.id, message.id);
+             const subjectHeader = fullMessage.payload.headers.find(
+                        header => header.name.toLowerCase() === 'subject'
+                    );
+                    const emailSubject = subjectHeader ? subjectHeader.value : '';
+
+                    // Extract email body (text or HTML)
+                    const extractBody = (payload) => {
+                        let body = '';
+
+                        if (payload.parts) {
+                            for (const part of payload.parts) {
+                                if (part.mimeType === 'text/plain' || part.mimeType === 'text/html') {
+                                    if (part.body.data) {
+                                        body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+                                        break;
+                                    }
+                                }
+                                // Handle nested parts
+                                if (part.parts) {
+                                    body = extractBody(part);
+                                    if (body) break;
+                                }
+                            }
+                        } else if (payload.body.data) {
+                            body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+                        }
+
+                        return body;
+                    };
+                    const emailBody = extractBody(fullMessage.payload) || fullMessage.snippet || '';
+
+            // Check if auto-summarize is enabled for the first bot
+            if (bots.length > 0 ) {
+                if( bots[0].isautoSummarize === true){
+                      try {
+                    // Get AI summarization
+                    console.log('🤖 Auto-summarizing email...');
+                    const summary = await getSmartInboxAnalysis(emailBody, emailSubject);
+                    console.log('📊 Email Summary:', summary);
+
+                    // Save summary to database
+                    await prisma.aiSummarys.create({
+                        data: {
+                            summary: summary.summary || '',
+                            priority: summary.priorityScore || 50,
+                            userId: user.id,
+                            gmailId: message.id
+
+                        }
+                    });
+                    console.log('✅ Summary saved to database');
+
+                } catch (error) {
+                    console.error('Error during auto-summarization:', error);
+                }
+            }
+            if(bots[0].isautoExtractTaskes === true  || bots[0].isautoExtractMettengs === true){
+                try {
+                    console.log('📋 Auto-extracting tasks and meetings...');
+                    const actionItems = await analyzeActionItems(emailBody, emailSubject);
+                    console.log('📊 Extracted Action Items:', actionItems);
+
+                    // Save tasks to database
+                    if (actionItems.tasks && actionItems.tasks.length > 0 && bots[0].isautoExtractTaskes === true) {
+                        for (const task of actionItems.tasks) {
+                            await prisma.task.create({
+                                data: {
+                                    task: task.description,
+                                    taskDate: task.deadline ? new Date(task.deadline) : null,
+                                    priority: task.priority.toLowerCase(),
+                                    userId: user.id,
+                                    gmailId: message.id,
+                                    isDoneTask: false
+                                }
+                            });
+                        }
+                        console.log(`✅ ${actionItems.tasks.length} task(s) saved to database`);
+                    }
+
+                    // Save meeting to calendar tasks and Google Calendar
+                    if (actionItems.meeting && bots[0].isautoExtractMettengs === true) {
+                        const meeting = actionItems.meeting;
+
+                        // Combine date and time into a DateTime
+                        let meetingDateTime;
+                        if (meeting.date && meeting.time) {
+                            meetingDateTime = new Date(`${meeting.date}T${meeting.time}:00`);
+                        } else if (meeting.date) {
+                            meetingDateTime = new Date(meeting.date);
+                        } else {
+                            meetingDateTime = new Date();
+                        }
+
+                        // First, add the meeting to Google Calendar
+                        let googleEventId = null;
+                        try {
+                            console.log('📅 Adding meeting to Google Calendar...');
+                            const calendarEvent = await createMeetingEvent(user.id, meeting);
+                            googleEventId = calendarEvent.id;
+                            console.log('✅ Meeting added to Google Calendar:', calendarEvent.htmlLink);
+                        } catch (calendarError) {
+                            console.error('⚠️ Error adding to Google Calendar:', calendarError.message);
+                            // Continue to save in database even if calendar addition fails
+                        }
+
+                        // Then save to database with the Google Calendar event ID
+                        await prisma.calendarTask.create({
+                            data: {
+                                title: meeting.title || 'Meeting',
+                                description: `${meeting.agenda || ''}\nDuration: ${meeting.duration || 'Not specified'}`,
+                                dueDate: meetingDateTime,
+                                status: 'pending',
+                                priority: 'high',
+                                userId: user.id,
+                                gmailId: message.id,
+                                googleEventId: googleEventId
+                            }
+                        });
+                        console.log('✅ Meeting saved to database');
+                    }
+
+                } catch (error) {
+                    console.error('Error during task extraction:', error);
+                }
+            }
+
+            if(bots[0].isAutoReply === true){
+                try {
+                    console.log('✉️ Auto-reply is enabled, generating response...');
+
+                    // Prepare email data for AI
+                    const emailData = {
+                        from: senderEmail,
+                        subject: emailSubject,
+                        date: new Date().toISOString(),
+                        body: emailBody,
+                        snippet: fullMessage.snippet
+                    };
+
+                    // Generate auto-reply using AI with user's custom prompt and tone
+                    const replyBody = await generateAutoReply(
+                        emailData,
+                        bots[0].userPrompet,
+                        bots[0].replayTony
+                    );
+
+                    console.log('🤖 AI-generated reply:', replyBody.substring(0, 100) + '...');
+
+                    // Prepare reply subject (Re: original subject)
+                    const replySubject = emailSubject.startsWith('Re:')
+                        ? emailSubject
+                        : `Re: ${emailSubject}`;
+
+                    // Send the auto-reply
+                    await sendAutoReply(
+                        user.id,
+                        message.id,
+                        senderEmail,
+                        replySubject,
+                        replyBody
+                    );
+
+                    console.log('✅ Auto-reply sent successfully to:', senderEmail);
+
+                } catch (error) {
+                    console.error('Error during auto-reply:', error);
+                    // Continue processing even if auto-reply fails
+                }
+            }
+                }
+                
         }
 
         // Update user's history ID

@@ -110,6 +110,7 @@ model Bots{
   id              String   @id @default(cuid())
   emails          String
   botName         String
+  description     String?
   userId          String
   isactive        Boolean  @default(true)
   replayTony      ReplayTony

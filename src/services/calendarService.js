@@ -142,8 +142,84 @@ async function deleteCalendarEvent(userId, eventId) {
   });
 }
 
+/**
+ * Create a meeting event in Google Calendar
+ * @param {string} userId - User ID
+ * @param {Object} meetingData - Meeting details from AI extraction
+ * @returns {Promise<Object>} - Created event from Google Calendar
+ */
+async function createMeetingEvent(userId, meetingData) {
+  const calendar = await getCalendarInstance(userId);
+
+  const { title, date, time, duration, agenda } = meetingData;
+
+  // Parse the date and time
+  let startDateTime;
+  if (date && time) {
+    startDateTime = new Date(`${date}T${time}:00`);
+  } else if (date) {
+    // If no time specified, default to 9:00 AM
+    startDateTime = new Date(date);
+    startDateTime.setHours(9, 0, 0, 0);
+  } else {
+    throw new Error('Meeting date is required');
+  }
+
+  // Calculate end time based on duration
+  let endDateTime = new Date(startDateTime);
+  if (duration) {
+    // Parse duration (e.g., "1 hour", "30 minutes", "1.5 hours")
+    const durationMatch = duration.match(/(\d+\.?\d*)\s*(hour|minute|hr|min)/i);
+    if (durationMatch) {
+      const value = parseFloat(durationMatch[1]);
+      const unit = durationMatch[2].toLowerCase();
+
+      if (unit.startsWith('hour') || unit === 'hr') {
+        endDateTime.setMinutes(endDateTime.getMinutes() + (value * 60));
+      } else {
+        endDateTime.setMinutes(endDateTime.getMinutes() + value);
+      }
+    } else {
+      // Default to 1 hour if duration format is unclear
+      endDateTime.setHours(endDateTime.getHours() + 1);
+    }
+  } else {
+    // Default to 1 hour
+    endDateTime.setHours(endDateTime.getHours() + 1);
+  }
+
+  const event = {
+    summary: title || 'Meeting',
+    description: agenda || '',
+    colorId: '9', // Blue for meetings
+    start: {
+      dateTime: startDateTime.toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+    end: {
+      dateTime: endDateTime.toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: 'email', minutes: 60 }, // 1 hour before
+        { method: 'popup', minutes: 15 }, // 15 minutes before
+      ],
+    },
+  };
+
+  const response = await calendar.events.insert({
+    calendarId: 'primary',
+    resource: event,
+  });
+
+  return response.data;
+}
+
 module.exports = {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
+  createMeetingEvent,
 };

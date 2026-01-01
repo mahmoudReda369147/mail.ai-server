@@ -200,11 +200,94 @@ function isFromSpecificEmail(message, targetEmail) {
   return senderEmail && senderEmail.toLowerCase() === targetEmail.toLowerCase();
 }
 
+/**
+ * Send an automated reply to an email
+ * @param {string} userId - User ID from database
+ * @param {string} originalMessageId - Original Gmail message ID to reply to
+ * @param {string} to - Recipient email address
+ * @param {string} subject - Email subject
+ * @param {string} htmlBody - HTML body of the reply
+ * @returns {Promise<Object>} - Sent message response
+ */
+async function sendAutoReply(userId, originalMessageId, to, subject, htmlBody) {
+  const { gmail } = await getGmailInstance(userId);
+
+  try {
+    let threadId = null;
+    let messageId = null;
+    let references = null;
+
+    // Fetch the original email to get threadId and Message-ID for proper threading
+    const originalEmail = await gmail.users.messages.get({
+      userId: 'me',
+      id: originalMessageId,
+      format: 'metadata',
+      metadataHeaders: ['Message-ID', 'References'],
+    });
+
+    threadId = originalEmail.data.threadId;
+    const headers = originalEmail.data.payload?.headers || [];
+    messageId = headers.find(h => h.name === 'Message-ID')?.value;
+    references = headers.find(h => h.name === 'References')?.value;
+
+    // Create email message with proper threading
+    const emailLines = [];
+    emailLines.push(`To: ${to}`);
+    emailLines.push(`Subject: ${subject}`);
+
+    // Add threading headers to keep the reply in the same conversation
+    if (messageId) {
+      emailLines.push(`In-Reply-To: ${messageId}`);
+      if (references) {
+        emailLines.push(`References: ${references} ${messageId}`);
+      } else {
+        emailLines.push(`References: ${messageId}`);
+      }
+    }
+
+    emailLines.push('MIME-Version: 1.0');
+    emailLines.push('Content-Type: text/html; charset=UTF-8');
+    emailLines.push(''); // Empty line between headers and body
+    emailLines.push(htmlBody);
+
+    const emailMessage = emailLines.join('\r\n');
+
+    // Encode message in base64url
+    const encodedMessage = Buffer.from(emailMessage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Send email with threadId for proper threading
+    const sendRequest = {
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage,
+        threadId: threadId
+      }
+    };
+
+    const response = await gmail.users.messages.send(sendRequest);
+
+    console.log('Auto-reply sent successfully:', {
+      messageId: response.data.id,
+      threadId: response.data.threadId
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error sending auto-reply:', error);
+    throw error;
+  }
+}
+
 module.exports = {
   setupGmailWatch,
   stopGmailWatch,
   getMessageDetails,
   getNewMessages,
   getSenderEmail,
-  isFromSpecificEmail
+  isFromSpecificEmail,
+  sendAutoReply
 };

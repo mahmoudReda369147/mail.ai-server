@@ -12,6 +12,7 @@ const templetsRoute = require('./routes/templets.route');
 const calendarRoute = require('./routes/calendar.route');
 const taskRoute = require('./routes/task.route');
 const webhooksRoute = require('./routes/webhooks');
+const botsRoute = require('./routes/bots.route');
 
 // Initialize Express app
 const app = express();
@@ -32,6 +33,7 @@ app.use("/api/templates", templetsRoute);
 app.use("/api/calendar", calendarRoute);
 app.use("/api/tasks", taskRoute);
 app.use("/api/webhooks", webhooksRoute);
+app.use("/api/bots", botsRoute);
 
 
 // Start server
