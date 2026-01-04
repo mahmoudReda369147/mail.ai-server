@@ -13,6 +13,8 @@ const calendarRoute = require('./routes/calendar.route');
 const taskRoute = require('./routes/task.route');
 const webhooksRoute = require('./routes/webhooks');
 const botsRoute = require('./routes/bots.route');
+const pdfRoute = require('./routes/pdf.route');
+
 
 // Initialize Express app
 const app = express();
@@ -34,6 +36,7 @@ app.use("/api/calendar", calendarRoute);
 app.use("/api/tasks", taskRoute);
 app.use("/api/webhooks", webhooksRoute);
 app.use("/api/bots", botsRoute);
+app.use("/api/pdf", pdfRoute);
 
 
 // Start server

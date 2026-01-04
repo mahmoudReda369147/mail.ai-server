@@ -219,11 +219,15 @@ const getEmails = async (req, res) => {
               })
             );
 
+            // Check if email is read (UNREAD label not present)
+            const isRead = !msgRes.data.labelIds?.includes('UNREAD');
+
             return {
               id: msgRes.data.id,
               threadId: msgRes.data.threadId,
               snippet: msgRes.data.snippet || null,
               internalDate: msgRes.data.internalDate || null,
+              isRead,
               from: getHeader('From'),
               to: getHeader('To'),
               subject: getHeader('Subject'),
@@ -231,6 +235,7 @@ const getEmails = async (req, res) => {
               textBody: bodies.text,
               htmlBody: bodies.html,
               attachments,
+              labels: msgRes.data.labelIds || [],
             };
           } catch (e) {
             return { id: m.id, error: e?.message || 'Failed to fetch message' };
@@ -359,6 +364,20 @@ const getEmailById = async (req, res) => {
       where: { gmailId: id },
       orderBy: { createdAt: 'desc' }
     });
+
+    // Mark email as read after successfully fetching it
+    try {
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: id,
+        requestBody: {
+          removeLabelIds: ['UNREAD']
+        }
+      });
+    } catch (modifyError) {
+      console.warn('Failed to mark email as read:', modifyError.message);
+      // Continue with response even if marking as read fails
+    }
 
     return ok(res, {
       ...email,
@@ -927,6 +946,397 @@ const saveGmailSummary = async (req, res) => {
   }
 };
 
+const getUnreadEmailCount = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return fail(res, 401, 'Unauthorized');
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'Please login with Google first.');
+    }
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // ✅ Get accurate unread count from Inbox label
+    const labelRes = await gmail.users.labels.get({
+      userId: 'me',
+      id: 'UNREAD'
+    });
+
+    const unreadCount = labelRes.data.messagesUnread || 0;
+
+    return ok(res, {
+      unreadCount,
+      hasUnread: unreadCount > 0,
+    }, 'Unread email count fetched successfully');
+
+  } catch (error) {
+    console.error(error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired, please re-authenticate.');
+    }
+    return fail(res, 500, error.message);
+  }
+};
+
+
+const archiveEmail = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return fail(res, 401, 'Unauthorized');
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'Please login with Google first.');
+    }
+
+    const { id } = req.params;
+    if (!id) return fail(res, 400, 'Message id is required');
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Archive email by removing INBOX label
+    await gmail.users.messages.modify({
+      userId: 'me',
+      id: id,
+      requestBody: {
+        removeLabelIds: ['INBOX']
+      }
+    });
+
+    return ok(res, { id, archived: true }, 'Email archived successfully');
+  } catch (error) {
+    console.error(error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired, please re-authenticate.');
+    }
+    if (error?.code === 404) {
+      return fail(res, 404, 'Email not found');
+    }
+    return fail(res, 500, error.message);
+  }
+};
+
+
+
+const getArchivedEmails = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return fail(res, 401, 'Unauthorized');
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'Please login with Google first.');
+    }
+
+    // Set credentials on the shared OAuth client
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Pagination and optional query filter
+    const { pageToken, q } = req.query;
+    const maxResults = 10;
+    
+    // Build query to get archived emails (no INBOX label) and exclude sent emails
+    let query = '-label:INBOX';
+    if (user.email) {
+      // Exclude emails from the user (sent emails)
+      const excludeFrom = `-from:${user.email}`;
+      query = `${query} ${excludeFrom}`;
+    }
+    
+    // Add any additional query parameters
+    if (q) {
+      query = `${query} ${q}`;
+    }
+
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults,
+      pageToken,
+      q: query,
+    });
+
+    const messages = listRes.data.messages || [];
+    const nextPageToken = listRes.data.nextPageToken || null;
+    const resultSizeEstimate = listRes.data.resultSizeEstimate ?? null;
+
+    if (messages.length === 0) {
+      return ok(res, [], 'No archived emails found', {
+        count: 0,
+        pageSize: maxResults,
+        nextPageToken,
+        hasMore: Boolean(nextPageToken),
+        resultSizeEstimate,
+        q: q || null,
+      });
+    }
+
+    // Fetch metadata for each message in parallel, but cap concurrency to avoid rate limits
+    const concurrency = 10;
+    const chunks = [];
+    for (let i = 0; i < messages.length; i += concurrency) {
+      chunks.push(messages.slice(i, i + concurrency));
+    }
+
+    const results = [];
+    for (const chunk of chunks) {
+      const details = await Promise.all(
+        chunk.map(async (m) => {
+          try {
+            const msgRes = await gmail.users.messages.get({
+              userId: 'me',
+              id: m.id,
+              format: 'full',
+            });
+            const payload = msgRes.data.payload || {};
+            const headers = payload.headers || [];
+            const getHeader = (name) => headers.find((h) => h.name === name)?.value || null;
+            const bodies = extractBodies(payload);
+
+            // Collect and fetch attachments
+            const attachmentParts = collectAttachmentParts(payload);
+            const MAX_ATTACHMENT_COUNT = 10;
+            const MAX_INLINE_SIZE = 5 * 1024 * 1024; // 5MB
+            const selected = attachmentParts.slice(0, MAX_ATTACHMENT_COUNT);
+            const attachments = await Promise.all(
+              selected.map(async (att) => {
+                try {
+                  if (att.size && att.size > MAX_INLINE_SIZE) {
+                    return {
+                      filename: att.filename,
+                      mimeType: att.mimeType,
+                      size: att.size,
+                      attachmentId: att.attachmentId,
+                      data: null,
+                      tooLarge: true,
+                    };
+                  }
+                  const attRes = await gmail.users.messages.attachments.get({
+                    userId: 'me',
+                    messageId: msgRes.data.id,
+                    id: att.attachmentId,
+                  });
+                  const data = attRes.data?.data || null; // base64url
+                  return {
+                    filename: att.filename,
+                    mimeType: att.mimeType,
+                    size: att.size,
+                    attachmentId: att.attachmentId,
+                    data,
+                    tooLarge: false,
+                  };
+                } catch (e) {
+                  return {
+                    filename: att.filename,
+                    mimeType: att.mimeType,
+                    size: att.size,
+                    attachmentId: att.attachmentId,
+                    data: null,
+                    error: e?.message || 'Failed to fetch attachment',
+                  };
+                }
+              })
+            );
+
+            // Check if email is read (UNREAD label not present)
+            const isRead = !msgRes.data.labelIds?.includes('UNREAD');
+
+            return {
+              id: msgRes.data.id,
+              threadId: msgRes.data.threadId,
+              snippet: msgRes.data.snippet || null,
+              internalDate: msgRes.data.internalDate || null,
+              isRead,
+              from: getHeader('From'),
+              to: getHeader('To'),
+              subject: getHeader('Subject'),
+              date: getHeader('Date'),
+              textBody: bodies.text,
+              htmlBody: bodies.html,
+              attachments,
+              labels: msgRes.data.labelIds || [],
+              isArchived: true, // Explicitly mark as archived
+            };
+          } catch (e) {
+            return { id: m.id, error: e?.message || 'Failed to fetch message' };
+          }
+        })
+      );
+      results.push(...details);
+    }
+
+    return ok(res, results, 'Archived emails fetched successfully', {
+      count: results.length,
+      pageSize: maxResults,
+      nextPageToken,
+      hasMore: Boolean(nextPageToken),
+      resultSizeEstimate,
+      q: q || null,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired, please re-authenticate.');
+    }
+    return fail(res, 500, error.message);
+  }
+};
+
+const getThreadById = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return fail(res, 401, 'Unauthorized');
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'Please login with Google first.');
+    }
+
+    const { id } = req.params;
+    if (!id) return fail(res, 400, 'Thread id is required');
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    const threadRes = await gmail.users.threads.get({
+      userId: 'me',
+      id: id,
+      format: 'full',
+    });
+
+    const messages = threadRes.data.messages || [];
+    
+    // Process each message in the thread
+    const processedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        try {
+          const payload = msg.payload || {};
+          const headers = payload.headers || [];
+          const getHeader = (name) => headers.find((h) => h.name === name)?.value || null;
+          const bodies = extractBodies(payload);
+
+          // Collect and fetch attachments
+          const attachmentParts = collectAttachmentParts(payload);
+          const MAX_ATTACHMENT_COUNT = 10;
+          const MAX_INLINE_SIZE = 5 * 1024 * 1024; // 5MB
+          const selected = attachmentParts.slice(0, MAX_ATTACHMENT_COUNT);
+          const attachments = await Promise.all(
+            selected.map(async (att) => {
+              try {
+                if (att.size && att.size > MAX_INLINE_SIZE) {
+                  return {
+                    filename: att.filename,
+                    mimeType: att.mimeType,
+                    size: att.size,
+                    attachmentId: att.attachmentId,
+                    data: null,
+                    tooLarge: true,
+                  };
+                }
+                const attRes = await gmail.users.messages.attachments.get({
+                  userId: 'me',
+                  messageId: msg.id,
+                  id: att.attachmentId,
+                });
+                const data = attRes.data?.data || null; // base64url
+                return {
+                  filename: att.filename,
+                  mimeType: att.mimeType,
+                  size: att.size,
+                  attachmentId: att.attachmentId,
+                  data,
+                  tooLarge: false,
+                };
+              } catch (e) {
+                return {
+                  filename: att.filename,
+                  mimeType: att.mimeType,
+                  size: att.size,
+                  attachmentId: att.attachmentId,
+                  data: null,
+                  error: e?.message || 'Failed to fetch attachment',
+                };
+              }
+            })
+          );
+
+          // Check if email is read (UNREAD label not present)
+          const isRead = !msg.labelIds?.includes('UNREAD');
+
+          return {
+            id: msg.id,
+            threadId: msg.threadId,
+            snippet: msg.snippet || null,
+            internalDate: msg.internalDate || null,
+            isRead,
+            labels: msg.labelIds || [],
+            from: getHeader('From'),
+            to: getHeader('To'),
+            cc: getHeader('Cc'),
+            bcc: getHeader('Bcc'),
+            subject: getHeader('Subject'),
+            date: getHeader('Date'),
+            textBody: bodies.text,
+            htmlBody: bodies.html,
+            attachments,
+          };
+        } catch (e) {
+          return { 
+            id: msg.id, 
+            threadId: msg.threadId,
+            error: e?.message || 'Failed to fetch message in thread' 
+          };
+        }
+      })
+    );
+
+    const firstMessage = messages[0];
+    const lastMessage = messages[messages.length - 1];
+    
+    const getHeader = (headers, name) => headers.find((h) => h.name === name)?.value || null;
+    const firstHeaders = firstMessage?.payload?.headers || [];
+    const lastHeaders = lastMessage?.payload?.headers || [];
+
+    return ok(res, {
+      id: threadRes.data.id,
+      historyId: threadRes.data.historyId,
+      snippet: threadRes.data.snippet || null,
+      messageCount: messages.length,
+      subject: getHeader(firstHeaders, 'Subject'),
+      from: getHeader(firstHeaders, 'From'),
+      to: getHeader(firstHeaders, 'To'),
+      firstDate: getHeader(firstHeaders, 'Date'),
+      lastDate: getHeader(lastHeaders, 'Date'),
+      messages: processedMessages,
+    }, 'Thread fetched successfully');
+  } catch (error) {
+    console.error(error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired, please re-authenticate.');
+    }
+    if (error?.code === 404) {
+      return fail(res, 404, 'Thread not found');
+    }
+    return fail(res, 500, error.message);
+  }
+};
+
 module.exports = {
   getEmails,
   getEmailById,
@@ -934,6 +1344,10 @@ module.exports = {
   sendEmail,
   deleteEmail,
   getThreads,
+  getThreadById,
   getSendedEmails,
   saveGmailSummary,
+  getUnreadEmailCount,
+  archiveEmail,
+  getArchivedEmails,
 };

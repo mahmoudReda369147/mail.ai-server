@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authMiddleware } = require('../middlewares/authMiddleware');
-const { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads, getSendedEmails, saveGmailSummary } = require('../controllers/gmail');
+const { getEmails, getEmailById, getreplayByGmailId, sendEmail, deleteEmail, getThreads, getThreadById, getSendedEmails, saveGmailSummary, getUnreadEmailCount, archiveEmail, getArchivedEmails } = require('../controllers/gmail');
 const { setupWatch, stopWatch } = require('../controllers/gmailWatch');
 
 // GET /api/gmail/emails
@@ -21,11 +21,23 @@ router.get('/sended', authMiddleware, getSendedEmails);
 // GET /api/gmail/threads
 router.get('/threads', authMiddleware, getThreads);
 
+// GET /api/gmail/threads/:id
+router.get('/threads/:id', authMiddleware, getThreadById);
+
 // DELETE /api/gmail/emails/:id
 router.delete('/emails/:id', authMiddleware, deleteEmail);
 
 // POST /api/gmail/summary
 router.post('/summary', authMiddleware, saveGmailSummary);
+
+// GET /api/gmail/unread-count
+router.get('/unread-count', authMiddleware, getUnreadEmailCount);
+
+// PATCH /api/gmail/emails/:id/archive
+router.patch('/emails/:id/archive', authMiddleware, archiveEmail);
+
+// GET /api/gmail/archived
+router.get('/archived', authMiddleware, getArchivedEmails);
 
 // Gmail Watch (Push Notifications)
 // POST /api/gmail/watch/setup
