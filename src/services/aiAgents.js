@@ -177,7 +177,7 @@ Return ONLY the HTML body content (no <html>, <head>, or <body> tags). Start dir
   return response.text;
 };
 
-const generateAutoReply = async (emailData, userPrompt, replyTone) => {
+const generateAutoReply = async (emailData, userPrompt, replyTone, template = null) => {
   // Use Gemini 3 Flash for auto-reply generation
   const model = "gemini-3-flash-preview";
   const ai = getAiClient();
@@ -192,6 +192,14 @@ const generateAutoReply = async (emailData, userPrompt, replyTone) => {
 
   const toneInstruction = toneInstructions[replyTone] || toneInstructions.Professional;
 
+  // Build template section if template exists
+  const templateSection = template
+    ? `\n**Template to Follow:**
+Use this template as a guide for structuring your response. You can adapt it to fit the specific email context, but maintain the general structure and key elements:
+${template}
+`
+    : '';
+
   const prompt = `You are an automated email assistant. Generate a professional HTML email reply based on the context and user's custom instructions.
 
 **Original Email Details:**
@@ -204,18 +212,18 @@ const generateAutoReply = async (emailData, userPrompt, replyTone) => {
 ${userPrompt}
 
 **Reply Tone:** ${replyTone}
-${toneInstruction}
+${toneInstruction}${templateSection}
 
 **Requirements:**
 1. Write a complete HTML email reply
 2. Follow the ${replyTone} tone strictly
-3. Address the user's custom instructions in your response
-4. If the original email asks questions, provide appropriate answers based on the user's instructions
-5. Use proper HTML formatting: <p> for paragraphs, <br> for line breaks
-6. Include an appropriate greeting and closing
-7. Keep the response relevant to the original email
-8. Do not include subject line or email headers in the response
-9. Be helpful and constructive in your response
+3. Address the user's custom instructions in your response${template ? '\n4. Use the provided template as a structural guide, adapting it to the specific email context' : ''}
+${template ? '5' : '4'}. If the original email asks questions, provide appropriate answers based on the user's instructions
+${template ? '6' : '5'}. Use proper HTML formatting: <p> for paragraphs, <br> for line breaks
+${template ? '7' : '6'}. Include an appropriate greeting and closing
+${template ? '8' : '7'}. Keep the response relevant to the original email
+${template ? '9' : '8'}. Do not include subject line or email headers in the response
+${template ? '10' : '9'}. Be helpful and constructive in your response
 
 **Output Format:**
 Return ONLY the HTML body content (no <html>, <head>, or <body> tags). Start directly with the greeting (e.g., "Dear...", "Hi...", "Hello...").`;

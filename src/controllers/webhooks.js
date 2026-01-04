@@ -69,7 +69,7 @@ const handleGmailWebhook = async (req, res) => {
                 where: {
                     userId: user.id,
                     emails: {
-                        contains: senderEmail
+                        has: senderEmail
                     },
                     isactive: true
                 }
@@ -149,7 +149,9 @@ const handleGmailWebhook = async (req, res) => {
                                     priority: task.priority.toLowerCase(),
                                     userId: user.id,
                                     gmailId: message.id,
-                                    isDoneTask: false
+                                    isDoneTask: false,
+                                    isCreatedByBot: true,
+                                    botId: bots[0].id
                                 }
                             });
                         }
@@ -192,7 +194,9 @@ const handleGmailWebhook = async (req, res) => {
                                 priority: 'high',
                                 userId: user.id,
                                 gmailId: message.id,
-                                googleEventId: googleEventId
+                                googleEventId: googleEventId,
+                                isCreatedByBot: true,
+                                botId: bots[0].id
                             }
                         });
                         console.log('✅ Meeting saved to database');
@@ -220,7 +224,8 @@ const handleGmailWebhook = async (req, res) => {
                     const replyBody = await generateAutoReply(
                         emailData,
                         bots[0].userPrompet,
-                        bots[0].replayTony
+                        bots[0].replayTony,
+                        bots[0].templete
                     );
 
                     console.log('🤖 AI-generated reply:', replyBody.substring(0, 100) + '...');

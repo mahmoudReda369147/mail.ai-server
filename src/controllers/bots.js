@@ -119,8 +119,8 @@ const createBot = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!emails || !botName || !replayTony || !userPrompet) {
-      return fail(res, 400, 'Required fields: emails, botName, replayTony, userPrompet');
+    if (!emails || !botName || !replayTony ) {
+      return fail(res, 400, 'Required fields: emails, botName, replayTony');
     }
 
     // Validate replayTony enum
@@ -188,7 +188,8 @@ const updateBot = async (req, res) => {
       userPrompet,
       isautoSummarize,
       isautoExtractTaskes,
-      isautoExtractMettengs
+      isautoExtractMettengs,
+      templete
     } = req.body;
 
     // Validate replayTony if provided
@@ -210,6 +211,7 @@ const updateBot = async (req, res) => {
     if (isautoSummarize !== undefined) updateData.isautoSummarize = isautoSummarize;
     if (isautoExtractTaskes !== undefined) updateData.isautoExtractTaskes = isautoExtractTaskes;
     if (isautoExtractMettengs !== undefined) updateData.isautoExtractMettengs = isautoExtractMettengs;
+    if (templete !== undefined) updateData.templete = templete;
 
     const updatedBot = await prisma.bots.update({
       where: { id: id },

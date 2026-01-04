@@ -136,6 +136,9 @@ const getAllTasks = async (req, res) => {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limitNum,
+        include: {
+          bot: true
+        }
       }),
       prisma.task.count({ where }),
       prisma.task.count({ where: { userId: user.id, isDoneTask: false } }),
@@ -174,6 +177,9 @@ const getTaskById = async (req, res) => {
 
     const task = await prisma.task.findUnique({
       where: { id },
+      include: {
+        bot: true
+      }
     });
 
     if (!task) {
@@ -266,6 +272,9 @@ const getTasksByGmailId = async (req, res) => {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limitNum,
+        include: {
+          bot: true
+        }
       }),
       prisma.task.count({ where }),
       prisma.task.count({

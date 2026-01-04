@@ -75,6 +75,9 @@ model CalendarTask {
   userId          String
   gmailId         String?
   googleEventId   String?  // Google Calendar event ID
+  isCreatedByBot  Boolean  @default(false)
+  botId           String?
+  bot             Bots?    @relation(fields: [botId], references: [id])
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -88,6 +91,9 @@ model Task {
   priority        String   @default("medium") // low, medium, high
   userId          String
   gmailId         String?
+  isCreatedByBot  Boolean @default(false)
+  botId           String?
+  bot             Bots?    @relation(fields: [botId], references: [id])
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   @@map("tasks")
@@ -108,17 +114,21 @@ model AiSummarys {
 
 model Bots{
   id              String   @id @default(cuid())
-  emails          String
+  emails          String[]
   botName         String
   description     String?
   userId          String
   isactive        Boolean  @default(true)
   replayTony      ReplayTony
   isAutoReply     Boolean  @default(false)
-  userPrompet     String
+  userPrompet     String?
+  templete        String?
   isautoSummarize Boolean  @default(false)
   isautoExtractTaskes Boolean  @default(false)
   isautoExtractMettengs Boolean  @default(false)
+
+  tasks           Task[]
+  calendarTasks   CalendarTask[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -115,10 +115,13 @@ const getTasks = async (req, res) => {
     const tasks = await prisma.calendarTask.findMany({
       where: whereClause,
       orderBy: {
-        dueDate: 'asc'
+        createdAt: 'desc'
       },
       skip,
       take: limitNum,
+      include: {
+        bot: true
+      }
     });
     const total = await prisma.calendarTask.count({ where: whereClause });
 
@@ -150,6 +153,9 @@ const getTaskById = async (req, res) => {
       where: {
         id: id,
         userId: user.id
+      },
+      include: {
+        bot: true
       }
     });
 
