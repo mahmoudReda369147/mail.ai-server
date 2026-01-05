@@ -715,11 +715,20 @@ const getThreads = async (req, res) => {
             const firstHeaders = firstMessage?.payload?.headers || [];
             const lastHeaders = lastMessage?.payload?.headers || [];
 
+            // Count unread messages not sent by current user
+            const unreadNum = messages.filter(msg => {
+              const isUnread = msg.labelIds?.includes('UNREAD') || false;
+              const fromHeader = getHeader(msg?.payload?.headers || [], 'From');
+              const isNotFromMe = fromHeader && !fromHeader.includes(user.email);
+              return isUnread && isNotFromMe;
+            }).length;
+
             return {
               id: threadRes.data.id,
               historyId: threadRes.data.historyId,
               snippet: threadRes.data.snippet || null,
               messageCount: messages.length,
+              unreadNum,
               subject: getHeader(firstHeaders, 'Subject'),
               from: getHeader(firstHeaders, 'From'),
               to: getHeader(firstHeaders, 'To'),
@@ -962,18 +971,51 @@ const getUnreadEmailCount = async (req, res) => {
 
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    // ✅ Get accurate unread count from Inbox label
-    const labelRes = await gmail.users.labels.get({
-      userId: 'me',
-      id: 'UNREAD'
+    // Get counts for different email categories in parallel
+    const [unreadLabelRes, sentLabelRes, archivedLabelRes, trashLabelRes] = await Promise.all([
+      // Unread emails (excluding sent)
+      gmail.users.labels.get({ userId: 'me', id: 'UNREAD' }),
+      // Sent emails
+      gmail.users.labels.get({ userId: 'me', id: 'SENT' }),
+      // Archived emails (no INBOX label, excluding sent and spam)
+      gmail.users.messages.list({
+        userId: 'me',
+        q: '-label:INBOX -label:SENT -label:SPAM -label:TRASH'
+      }),
+      // Trash
+      gmail.users.labels.get({ userId: 'me', id: 'TRASH' })
+    ]);
+
+    const unreadCount = unreadLabelRes.data.messagesUnread || 0;
+    const sentCount = sentLabelRes.data.messagesTotal || 0;
+    const archivedCount = archivedLabelRes.data.resultSizeEstimate || 0;
+    const trashCount = trashLabelRes.data.messagesTotal || 0;
+
+    // Get count of incomplete tasks
+    const incompleteTasksCount = await prisma.task.count({
+      where: {
+        userId: user.id,
+        isDoneTask: false
+      }
     });
 
-    const unreadCount = labelRes.data.messagesUnread || 0;
+    // Get count of completed calendar tasks
+    const completedCalendarTasksCount = await prisma.calendarTask.count({
+      where: {
+        userId: user.id,
+        status: 'pending'
+      }
+    });
 
     return ok(res, {
-      unreadCount,
-      hasUnread: unreadCount > 0,
-    }, 'Unread email count fetched successfully');
+      unread: unreadCount,
+      sent: sentCount,
+      archived: archivedCount,
+      trash: trashCount,
+      incompleteTasks: incompleteTasksCount,
+      completedCalendarTasks: completedCalendarTasksCount,
+      total: unreadCount + sentCount + archivedCount + trashCount
+    }, 'Email counts fetched successfully');
 
   } catch (error) {
     console.error(error);
@@ -1312,6 +1354,30 @@ const getThreadById = async (req, res) => {
     const getHeader = (headers, name) => headers.find((h) => h.name === name)?.value || null;
     const firstHeaders = firstMessage?.payload?.headers || [];
     const lastHeaders = lastMessage?.payload?.headers || [];
+
+    // Mark all messages not from current user as read
+    try {
+      const messagesToMarkAsRead = messages.filter(msg => {
+        const fromHeader = getHeader(msg?.payload?.headers || [], 'From');
+        return fromHeader && !fromHeader.includes(user.email) && msg.labelIds?.includes('UNREAD');
+      });
+
+      // Mark messages as read in parallel
+      await Promise.allSettled(
+        messagesToMarkAsRead.map(async (msg) => {
+          await gmail.users.messages.modify({
+            userId: 'me',
+            id: msg.id,
+            requestBody: {
+              removeLabelIds: ['UNREAD']
+            }
+          });
+        })
+      );
+    } catch (modifyError) {
+      console.warn('Failed to mark some messages as read:', modifyError.message);
+      // Continue with response even if marking as read fails
+    }
 
     return ok(res, {
       id: threadRes.data.id,
