@@ -16,6 +16,16 @@ enum ReplayTony {
   Detailed
 }
 
+enum NotificationType {
+  task
+  calendarTask
+}
+
+enum NotificationPriority {
+  high
+  low
+}
+
 model User {
   id            String   @id @default(cuid())
   email         String   @unique
@@ -134,4 +144,21 @@ model Bots{
   updatedAt       DateTime @updatedAt
 
   @@map("bots")
+}
+
+model Notification {
+  id              String               @id @default(cuid())
+  type            NotificationType
+  title           String
+  description     String?
+  priority        NotificationPriority
+  taskId          String?
+  userId          String
+  isRead          Boolean              @default(false)
+  isActionDone    Boolean              @default(false)
+  isDeleted       Boolean              @default(false)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@map("notifications")
 }

@@ -1013,7 +1013,7 @@ const getUnreadEmailCount = async (req, res) => {
       archived: archivedCount,
       trash: trashCount,
       incompleteTasks: incompleteTasksCount,
-      completedCalendarTasks: completedCalendarTasksCount,
+      incompletedCalendarTasks: completedCalendarTasksCount,
       total: unreadCount + sentCount + archivedCount + trashCount
     }, 'Email counts fetched successfully');
 
@@ -1403,12 +1403,90 @@ const getThreadById = async (req, res) => {
   }
 };
 
+/**
+ * DELETE /api/gmail/emails/all
+ * Delete all INBOX emails (move to trash) for the authenticated user
+ * Only deletes emails in INBOX, not sent or archived emails
+ */
+const deleteAllEmails = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return fail(res, 401, 'Unauthorized');
+    }
+
+    if (!user.accessToken && !user.refreshToken) {
+      return fail(res, 400, 'No Google tokens found for this user. Please login with Google first.');
+    }
+
+    oauth2Client.setCredentials({
+      access_token: user.accessToken || undefined,
+      refresh_token: user.refreshToken || undefined,
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Get only INBOX message IDs
+    let allMessageIds = [];
+    let pageToken = null;
+
+    do {
+      const listRes = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: 500,
+        pageToken: pageToken,
+        labelIds: ['INBOX'], // Only get INBOX messages
+      });
+
+      const messages = listRes.data.messages || [];
+      allMessageIds = allMessageIds.concat(messages.map(m => m.id));
+      pageToken = listRes.data.nextPageToken;
+    } while (pageToken);
+
+    if (allMessageIds.length === 0) {
+      return ok(res, { deletedCount: 0, message: 'No inbox emails to delete' }, 'No inbox emails to delete');
+    }
+
+    // Batch delete (move to trash) - process in chunks of 100
+    const chunkSize = 100;
+    let deletedCount = 0;
+
+    for (let i = 0; i < allMessageIds.length; i += chunkSize) {
+      const chunk = allMessageIds.slice(i, i + chunkSize);
+
+      // Use batch modify to move emails to trash
+      await gmail.users.messages.batchModify({
+        userId: 'me',
+        requestBody: {
+          ids: chunk,
+          addLabelIds: ['TRASH'],
+          removeLabelIds: ['INBOX']
+        }
+      });
+
+      deletedCount += chunk.length;
+    }
+
+    return ok(res, {
+      deletedCount,
+      message: `Successfully moved ${deletedCount} inbox email(s) to trash`
+    }, `Successfully moved ${deletedCount} inbox email(s) to trash`);
+  } catch (error) {
+    console.error('Error deleting all emails:', error);
+    if (error?.code === 401) {
+      return fail(res, 401, 'Token expired or invalid. Please re-authenticate.');
+    }
+    return fail(res, 500, 'Failed to delete emails: ' + (error?.message || ''));
+  }
+};
+
 module.exports = {
   getEmails,
   getEmailById,
   getreplayByGmailId,
   sendEmail,
   deleteEmail,
+  deleteAllEmails,
   getThreads,
   getThreadById,
   getSendedEmails,

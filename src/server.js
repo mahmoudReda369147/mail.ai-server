@@ -14,6 +14,8 @@ const taskRoute = require('./routes/task.route');
 const webhooksRoute = require('./routes/webhooks');
 const botsRoute = require('./routes/bots.route');
 const pdfRoute = require('./routes/pdf.route');
+const notificationRoute = require('./routes/notification.route');
+const { startNotificationJob } = require('./jobs/notificationJob');
 
 
 // Initialize Express app
@@ -29,6 +31,7 @@ app.use(cors({
 app.use(express.json());
 
 // Routes
+
 app.use("/api/auth", authRoute);
 app.use("/api/gmail", gmailRoute);
 app.use("/api/templates", templetsRoute);
@@ -37,12 +40,17 @@ app.use("/api/tasks", taskRoute);
 app.use("/api/webhooks", webhooksRoute);
 app.use("/api/bots", botsRoute);
 app.use("/api/pdf", pdfRoute);
+app.use("/api/notifications", notificationRoute);
+console.log('✅ Notification route registered at /api/notifications');
 
 
 // Start server
 const PORT = config.PORT || 8080;
  app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
+  // Start cron jobs
+  startNotificationJob();
 });
 
 module.exports = app;

@@ -81,6 +81,21 @@ const editTask = async (req, res) => {
       data: updateData,
     });
 
+    // Mark related notification as action done when task is completed
+    if (isDoneTask === true) {
+      await prisma.notification.updateMany({
+        where: {
+          taskId: id,
+          type: 'task',
+          isActionDone: false
+        },
+        data: {
+          isActionDone: true,
+          updatedAt: new Date()
+        }
+      });
+    }
+
     return ok(res, updatedTask, 'Task updated successfully');
   } catch (error) {
     console.error('Error updating task:', error);

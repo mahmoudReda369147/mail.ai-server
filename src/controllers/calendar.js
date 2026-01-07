@@ -250,6 +250,21 @@ const updateTask = async (req, res) => {
       }
     });
 
+    // Mark related notification as action done only if status is completed
+    if (status === 'completed') {
+      await prisma.notification.updateMany({
+        where: {
+          taskId: id,
+          type: 'calendarTask',
+          isActionDone: false
+        },
+        data: {
+          isActionDone: true,
+          updatedAt: new Date()
+        }
+      });
+    }
+
     return ok(res, updatedTask, 'Task updated successfully');
   } catch (error) {
     console.error('Error updating task:', error);
